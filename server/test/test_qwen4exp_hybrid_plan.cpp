@@ -1,5 +1,6 @@
 #include "qwen4exp_hybrid_plan.h"
 #include "qwen4exp_gguf_inventory.h"
+#include "moe_hybrid_routing_stats.h"
 
 #include <cassert>
 #include <string>
