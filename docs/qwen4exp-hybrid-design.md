@@ -17,9 +17,11 @@ FFN. The planner in `src/common/qwen4exp_hybrid_plan.*` therefore enforces:
 - the shared expert stays on the primary owner;
 - only `ffn_*_exps` routed experts enter hot/cold placement.
 
-This is deliberately a planning seam, not a fake Qwen4Exp backend. The full
-Qwen4Exp loader/graph/cache implementation from llama.cpp still needs to be
-ported before this plan can drive inference.
+This is deliberately not yet a complete Qwen4Exp inference backend. The
+adapter now includes two tested runtime boundaries, however: selected routed
+experts can be materialized from split GGUF shards into Lucebox's common MoE
+storage, and the protected non-expert core can be loaded on the primary GPU.
+The HC/GDN/QSA/PLE graph and caches still need to be ported before generation.
 
 ## Adapter boundary (current implementation)
 
@@ -75,3 +77,21 @@ router, and shared expert on the primary owner.
 
 This is intentionally not a runtime claim. Until the Qwen4Exp graph is wired
 into Lucebox, the map and planner are validated preparation code only.
+
+## R9700 materialization canaries
+
+The split-shard path has now been exercised against the real three-file
+Qwen3.8-Flash-Next UD-IQ4_XS model on HIP device 0 (Radeon AI PRO R9700):
+
+- one exact routed expert per layer was uploaded across all 48 layers;
+- the resulting R9700 allocation was 116,263,168 bytes;
+- a 64 KiB device readback matched the source GGUF bytes exactly;
+- the protected core loader bound 1,079 tensors and uploaded 5,351,626,240
+  bytes to the R9700;
+- it excluded 59,519,795,200 routed-expert bytes for hybrid placement and
+  28,800,138,240 PLE gather-table bytes for CPU ownership.
+
+Both canaries released their allocations after validation. They prove the
+loader/ownership boundary and byte-accurate transfer, not model correctness or
+inference speed. The live 8060S-only llama.cpp server remained healthy during
+both tests.

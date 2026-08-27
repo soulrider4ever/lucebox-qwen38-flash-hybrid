@@ -65,6 +65,29 @@ ctest --test-dir server/build-hip-gfx1151 --output-on-failure \
   -R test_qwen4exp_hybrid_plan
 ```
 
+For the isolated R9700 loader canaries, build the two dedicated executables
+for both Lucebox GPU architectures and pass all split shards in order:
+
+```bash
+cmake -S server -B server/build-materializer -G Ninja \
+  -DCMAKE_BUILD_TYPE=Release \
+  -DDFLASH27B_GPU_BACKEND=hip \
+  -DDFLASH27B_HIP_ARCHITECTURES='gfx1151;gfx1201'
+
+cmake --build server/build-materializer --target \
+  test_qwen4exp_expert_materializer test_qwen4exp_core_loader -j"$(nproc)"
+
+server/build-materializer/test_qwen4exp_expert_materializer \
+  /models/qwen38-flash-next/UD-IQ4_XS/*-0000{1,2,3}-of-00003.gguf
+
+server/build-materializer/test_qwen4exp_core_loader \
+  /models/qwen38-flash-next/UD-IQ4_XS/*-0000{1,2,3}-of-00003.gguf
+```
+
+These executables assume unmasked Lucebox ROCm ordering where device 0 is the
+R9700. Verify the printed device identity before trusting the result. They are
+bounded load/copy tests; they do not generate tokens.
+
 ## Obtain the model
 
 Do not commit model weights. Download the Unsloth GGUF separately:
