@@ -54,6 +54,10 @@ Qwen4ExpTensorIdentity identify_qwen4exp_tensor(const std::string & name) {
     int layer = -1;
     std::string leaf;
     if (!split_block_name(name, layer, leaf)) {
+        // A string that claims to be a block tensor but cannot be parsed must
+        // fail closed.  Do not let a routed-expert substring in a malformed
+        // name escape into the peer placement tier.
+        if (name.compare(0, 4, "blk.") == 0) return result;
         result.role = classify_qwen4exp_tensor(name);
         return result;
     }
