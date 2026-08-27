@@ -1,4 +1,6 @@
 #include "common/qwen4exp_gguf_inventory.h"
+#include "common/qwen4exp_hybrid_loader.h"
+#include "common/moe_hybrid_routing_stats.h"
 
 #include "gguf.h"
 
@@ -44,8 +46,19 @@ int main(int argc, char ** argv) {
                         static_cast<unsigned long long>(row.down_bytes),
                         row.expert_tensor_count);
         }
+        assert(row.per_expert_bytes > 0);
     } else {
         std::fprintf(stderr, "inventory rejected: %s\n", error.c_str());
+    }
+    if (ok) {
+        dflash::common::MoeHybridRoutingStats routing;
+        assert(routing.init(inventory.n_layer, inventory.n_expert, inventory.n_expert_used));
+        dflash::common::Qwen4ExpHybridPlan plan;
+        std::vector<uint64_t> fixed((size_t) inventory.n_layer, 0);
+        assert(dflash::common::prepare_qwen4exp_hybrid_plan_from_gguf(
+            std::vector<std::string>(argv + 1, argv + argc), routing, fixed,
+            512ULL * 1024ULL * 1024ULL, 1.0, plan, &error));
+        assert(plan.valid(&error));
     }
     for (gguf_context * context : contexts) gguf_free(context);
     return ok ? 0 : 1;

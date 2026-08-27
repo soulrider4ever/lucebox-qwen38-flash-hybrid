@@ -488,6 +488,7 @@ add_library(dflash_common STATIC
     src/common/moe_routing_collector.cpp
     src/common/qwen4exp_hybrid_plan.cpp
     src/common/qwen4exp_gguf_inventory.cpp
+    src/common/qwen4exp_hybrid_loader.cpp
     src/qwen35/layer_split_forward.cpp
     src/qwen35/qwen35_target_shard_ipc.cpp
     src/qwen35/qwen35_target_shard_ipc_daemon.cpp
