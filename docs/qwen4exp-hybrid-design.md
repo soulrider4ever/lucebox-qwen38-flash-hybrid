@@ -17,11 +17,12 @@ FFN. The planner in `src/common/qwen4exp_hybrid_plan.*` therefore enforces:
 - the shared expert stays on the primary owner;
 - only `ffn_*_exps` routed experts enter hot/cold placement.
 
-This is deliberately not yet a complete Qwen4Exp inference backend. The
-adapter now includes two tested runtime boundaries, however: selected routed
-experts can be materialized from split GGUF shards into Lucebox's common MoE
-storage, and the protected non-expert core can be loaded on the primary GPU.
-The HC/GDN/QSA/PLE graph and caches still need to be ported before generation.
+This repository does not duplicate the complete Qwen4Exp inference graph.
+Instead, generation uses the native Qwen4Exp llama.cpp graph as the numerical
+source of truth while this adapter supplies two tested ownership boundaries:
+selected routed experts can be materialized from split GGUF shards into
+Lucebox's common MoE storage, and the protected non-expert core can be loaded
+on the primary GPU. The native graph's HC/GDN/QSA/PLE caches remain intact.
 
 ## Adapter boundary (current implementation)
 
@@ -32,28 +33,25 @@ hyper-connections, recurrent/GDN tensors, sparse indexer tensors, and PLE
 history are explicitly non-movable. Malformed block names are rejected rather
 than silently assigned to a placement tier.
 
-This is the first executable adapter boundary. It is intentionally not wired
-into the inference graph yet: the Qwen4Exp graph must first expose its routed
-expert tensors and state ownership through a model-specific loader. The unit
-test covers routed-vs-shared/state classification and malformed names.
+This is the first executable adapter boundary. The unit test covers
+routed-vs-shared/state classification and malformed names. For token
+generation, the runtime integration maps the same routed tensor names through
+llama.cpp's `--override-tensor` facility and leaves all protected tensors on
+the 8060S graph owner.
 
-## Intended Lucebox route
+## Selective expert-stack route
 
-For the R9700 + Strix Halo system, the eventual plan is:
+For the R9700 + Strix Halo system, the validated coarse route is:
 
-1. Run the Qwen4Exp graph on the primary owner (initially the R9700 for a
-   discrete-device experiment).
-2. Keep the latency-critical routed experts hot on that owner using routing
-   observations and the critical-path byte budget.
-3. Keep the long-tail routed experts on the peer owner or host, grouped by
-   expert id so transfers are batched rather than issued once per token.
-4. Transfer only the selected routed contributions and join them before the
-   Qwen4Exp hyper-connection combine.
+1. Run the protected Qwen4Exp graph and state caches on the 8060S.
+2. Keep complete routed expert stacks for selected layers on the R9700.
+3. Keep all unselected routed stacks on CPU.
+4. Let ggml schedule the routed MoE operations and cross-device joins.
 
-The existing `MoeHybridPlacement` critical-path allocator is reused, but its
-result is wrapped with Qwen4Exp ownership invariants so a later graph adapter
-cannot accidentally move recurrent state or sparse-index tensors with the
-expert payload.
+This route produced exact baseline output hashes but lost to CPU MoE at both
+four and twenty R9700-resident layers. The next-level design, if revisited,
+must operate below the whole-tensor scheduler: move only active experts, batch
+their contributions, and overlap remote work with the shared expert.
 
 ## Current measured control
 
@@ -75,8 +73,10 @@ materializer can mmap each shard and upload only selected slices, while the
 Qwen4Exp graph keeps its recurrent state, sparse index cache, PLE history,
 router, and shared expert on the primary owner.
 
-This is intentionally not a runtime claim. Until the Qwen4Exp graph is wired
-into Lucebox, the map and planner are validated preparation code only.
+The map and planner are backend-neutral preparation code. Runtime generation
+is validated separately through the native Qwen4Exp llama.cpp graph and the
+topology-checking launcher documented in
+`qwen38-flash-next-lucebox.md`.
 
 ## R9700 materialization canaries
 
@@ -91,7 +91,8 @@ Qwen3.8-Flash-Next UD-IQ4_XS model on HIP device 0 (Radeon AI PRO R9700):
 - it excluded 59,519,795,200 routed-expert bytes for hybrid placement and
   28,800,138,240 PLE gather-table bytes for CPU ownership.
 
-Both canaries released their allocations after validation. They prove the
-loader/ownership boundary and byte-accurate transfer, not model correctness or
-inference speed. The live 8060S-only llama.cpp server remained healthy during
-both tests.
+Both canaries released their allocations after validation. Model correctness
+and inference speed were then tested separately with selective full-stack
+placement: the four-layer and twenty-layer R9700 profiles reproduced the
+baseline output hashes exactly but were slower than CPU MoE. The 8060S-only
+baseline was restored after the campaign.

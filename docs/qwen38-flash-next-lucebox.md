@@ -3,9 +3,11 @@
 This document describes the experimental Qwen3.8-Flash-Next work in this
 repository and the fastest validated Lucebox profile.
 
-> **Status:** experimental, but correctness-checked on Lucebox. The current
-> winner is ROCm on the Strix Halo 8060S with CPU-resident routed MoE layers.
-> This is not yet true R9700 expert offload.
+> **Status:** the loader, ownership boundary, and selective R9700 execution
+> path are correctness-checked on Lucebox. The current performance winner is
+> still ROCm on the Strix Halo 8060S with CPU-resident routed MoE layers.
+> Selective R9700 expert-stack execution works and is numerically identical,
+> but loses to CPU MoE because coarse ggml scheduler transfers dominate.
 
 ## What this fork adds
 
@@ -52,11 +54,11 @@ cmake -S server -B server/build-hip-gfx1151 \
 cmake --build server/build-hip-gfx1151 --target dflash_server -j$(nproc)
 ```
 
-This builds the Lucebox fork and its placement/test infrastructure. The
-currently validated Flash-Next server binary was built from a separate
-Qwen4Exp-enabled llama.cpp checkout because the fork's Qwen4Exp adapter is
-not yet a complete model loader. Do not represent the planner seam as a
-drop-in replacement for that binary.
+This builds the Lucebox fork and its placement/test infrastructure. Runtime
+generation uses the Qwen4Exp-enabled llama.cpp branch referenced below. That
+runtime already contains the native HC/GDN/QSA/PLE graph and hybrid caches;
+the fork supplies the split-GGUF inventory, ownership validation, bounded
+materialization canaries, and reproducible selective-expert launch contract.
 
 Run the focused fork test after building:
 
@@ -170,14 +172,53 @@ tokens. The public LocalMaxxing record is
 - The current Flash-Next GGUF does not expose a usable MTP head; `ngram-mod`
   is the supported speculative path.
 
-## Development direction
+### Selective R9700 expert execution
 
-The next real milestone is expert-level remote execution on the R9700:
-batch selected expert contributions, transfer only routed results, and join
-them before Qwen4Exp's hyper-connection combine. Do not move GDN/recurrent
-state, PLE history, QSA cache, or shared-expert state as if they were ordinary
-DeepSeek tensors. Every implementation step must pass correctness tests and
-the same three-workload benchmark before it is considered an improvement.
+The Qwen4Exp llama.cpp runtime can place complete routed expert stacks for
+selected layers on the R9700 with `--override-tensor`, while a later
+`--n-cpu-moe 64` fallback keeps every other routed layer on CPU. Device
+ordering must be unmasked:
+
+- `ROCm0` = Radeon AI PRO R9700 (`gfx1201`)
+- `ROCm1` = Radeon 8060S (`gfx1151`)
+
+Build the runtime for both architectures and use
+[`scripts/run-qwen4exp-selective-experts.sh`](../scripts/run-qwen4exp-selective-experts.sh).
+The tested 20-layer profile placed layers 0 through 19 on the R9700:
+
+| Profile | Long decode | Long prefill | R9700 allocation | Output hash |
+|---|---:|---:|---:|---|
+| CPU MoE 64 (winner) | **179.134 tok/s** | **501.079 tok/s** | 0 GB | `a85b737…` |
+| R9700 layers 0-19 | 153.529 tok/s | 421.716 tok/s | 30.385 GB | `a85b737…` |
+| R9700 layers 0-3 | 149.762 tok/s | 397.611 tok/s | 10.950 GB | `a85b737…` |
+
+The benchmark used the same 2,549-token prompt, 128 generated tokens,
+temperature zero, one warmup, and three measured runs. All three profiles
+produced the exact same SHA-256 output hash. The R9700 values above are that
+device's unique amdgpu client allocation, not combined system/GPU capacity.
+
+The result closes the coarse scheduler experiment: moving fewer complete
+expert stacks does not recover the CPU-MoE baseline. The bottleneck is the
+per-layer cross-device scheduler boundary, not insufficient R9700 capacity
+or incorrect Qwen4Exp state ownership.
+
+## Engineering conclusion
+
+The validated ownership split is:
+
+- 8060S: HC/GDN/QSA graph, recurrent and index caches, shared experts, and
+  protected core tensors;
+- CPU: the 28.80 GB PLE gather table and routed stacks not selected for the
+  R9700;
+- R9700: only explicitly selected routed `ffn_*_exps` tensor stacks.
+
+The native upstream Qwen4Exp graph is the numerical source of truth; copying
+it into a second Lucebox backend would duplicate model and cache semantics
+without changing the measured transfer boundary. A future attempt should
+therefore start below ggml's whole-tensor scheduler: batch only active expert
+contributions, overlap R9700 work with primary-device shared-expert work, and
+join one compact activation result per layer. Do not move GDN/recurrent state,
+PLE history, QSA cache, or shared-expert state.
 
 ## Rollback / safety
 
