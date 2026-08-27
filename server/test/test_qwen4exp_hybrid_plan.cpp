@@ -33,6 +33,19 @@ int main() {
     assert(!identify_qwen4exp_tensor("blk.bad.ffn_down_exps.weight").valid());
     assert(!identify_qwen4exp_tensor("blk.17").valid());
 
+    Qwen4ExpTensorInventory inventory;
+    assert(inventory.observe("blk.0.ssm_beta.weight"));
+    assert(inventory.observe("blk.0.ffn_down_exps.weight"));
+    assert(inventory.observe("blk.1.ffn_down_exps.weight"));
+    assert(inventory.validate(2, 0, &error));
+    assert(!inventory.observe("blk.bad.ffn_down_exps.weight", &error));
+    assert(error.find("malformed") != std::string::npos);
+
+    Qwen4ExpTensorInventory missing;
+    assert(missing.observe("blk.0.ffn_down_exps.weight"));
+    assert(!missing.validate(2, 0, &error));
+    assert(error.find("layer 1") != std::string::npos);
+
     Qwen4ExpHybridPlan plan;
     plan.config.n_layer = 2;
     plan.config.n_expert = 4;

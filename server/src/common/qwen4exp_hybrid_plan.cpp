@@ -3,6 +3,7 @@
 #include "moe_hybrid_routing_stats.h"
 
 #include <cctype>
+#include <algorithm>
 #include <limits>
 
 namespace dflash::common {
@@ -74,6 +75,40 @@ bool qwen4exp_tensor_may_move_to_peer(const Qwen4ExpTensorIdentity & identity) {
     // an FFN tensor: it participates in every token's residual path.
     return identity.valid() && identity.expert_stacked &&
            identity.role == Qwen4ExpTensorRole::RoutedExpert;
+}
+
+bool Qwen4ExpTensorInventory::observe(const std::string & name, std::string * error) {
+    const auto identity = identify_qwen4exp_tensor(name);
+    if (name.compare(0, 4, "blk.") == 0 && !identity.valid()) {
+        if (error) *error = "malformed or unknown Qwen4Exp block tensor: " + name;
+        return false;
+    }
+    if (!identity.valid() || identity.layer < 0) return true;
+
+    const size_t index = static_cast<size_t>(identity.layer);
+    if (index >= routed_layer.size()) routed_layer.resize(index + 1, 0);
+    if (index >= protected_layer.size()) protected_layer.resize(index + 1, 0);
+    max_layer = std::max(max_layer, identity.layer);
+    if (qwen4exp_tensor_may_move_to_peer(identity)) routed_layer[index] = 1;
+    else protected_layer[index] = 1;
+    return true;
+}
+
+bool Qwen4ExpTensorInventory::validate(int n_layer, int first_moe_layer,
+                                       std::string * error) const {
+    if (n_layer <= 0 || first_moe_layer < 0 || first_moe_layer > n_layer) {
+        if (error) *error = "invalid Qwen4Exp inventory dimensions";
+        return false;
+    }
+    for (int layer = first_moe_layer; layer < n_layer; ++layer) {
+        if (static_cast<size_t>(layer) >= routed_layer.size() ||
+            !routed_layer[static_cast<size_t>(layer)]) {
+            if (error) *error = "missing routed expert tensor at Qwen4Exp layer " +
+                std::to_string(layer);
+            return false;
+        }
+    }
+    return true;
 }
 
 bool Qwen4ExpHybridPlan::valid(std::string * error) const {

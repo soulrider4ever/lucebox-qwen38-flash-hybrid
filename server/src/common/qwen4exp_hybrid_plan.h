@@ -32,6 +32,20 @@ struct Qwen4ExpTensorIdentity {
     bool valid() const { return role != Qwen4ExpTensorRole::Unknown; }
 };
 
+// Loader-facing inventory collected while walking GGUF tensor metadata. It
+// does not retain tensor pointers; it only proves that each routed layer has
+// the movable expert surface before a placement plan is allowed to consume
+// it.
+struct Qwen4ExpTensorInventory {
+    int max_layer = -1;
+    std::vector<uint8_t> routed_layer;
+    std::vector<uint8_t> protected_layer;
+
+    bool observe(const std::string & name, std::string * error = nullptr);
+    bool validate(int n_layer, int first_moe_layer,
+                  std::string * error = nullptr) const;
+};
+
 // Classify canonical llama.cpp Qwen4Exp tensor names. Unknown tensors stay on
 // the target owner when a future loader consumes this boundary.
 Qwen4ExpTensorRole classify_qwen4exp_tensor(const std::string & name);
