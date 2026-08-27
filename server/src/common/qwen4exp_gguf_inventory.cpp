@@ -67,58 +67,91 @@ bool Qwen4ExpGgufInventory::valid(std::string * error) const {
 bool scan_qwen4exp_gguf_inventory(const gguf_context * gguf,
                                   Qwen4ExpGgufInventory & out,
                                   std::string * error) {
-    out = {};
     if (!gguf) {
         fail(error, "null GGUF context");
         return false;
     }
-    if (!read_arch(gguf, out.architecture)) {
-        fail(error, "missing general.architecture in GGUF");
+    return scan_qwen4exp_gguf_shards({gguf}, out, error);
+}
+
+bool scan_qwen4exp_gguf_shards(const std::vector<const gguf_context *> & shards,
+                               Qwen4ExpGgufInventory & out,
+                               std::string * error) {
+    out = {};
+    if (shards.empty()) {
+        fail(error, "no GGUF shards supplied");
         return false;
     }
-    if (!read_u32(gguf, "qwen4exp.block_count", out.n_layer) ||
-        !read_u32(gguf, "qwen4exp.expert_count", out.n_expert) ||
-        !read_u32(gguf, "qwen4exp.expert_used_count", out.n_expert_used)) {
-        fail(error, "missing Qwen4Exp expert metadata in GGUF");
-        return false;
-    }
-    out.layers.resize(static_cast<size_t>(out.n_layer));
 
-    const int64_t tensor_count = gguf_get_n_tensors(gguf);
-    for (int64_t tid = 0; tid < tensor_count; ++tid) {
-        const char * raw_name = gguf_get_tensor_name(gguf, tid);
-        if (!raw_name) {
-            fail(error, "GGUF tensor has no name");
+    bool initialized = false;
+    for (const gguf_context * gguf : shards) {
+        if (!gguf) {
+            fail(error, "null GGUF shard context");
             return false;
         }
-        const std::string name(raw_name);
-        if (!out.tensor_roles.observe(name, error)) return false;
+        Qwen4ExpGgufInventory shard;
+        // Read the repeated model metadata from each shard, but scan tensor
+        // records into a partial inventory because split files partition the
+        // expert tensors.
+        if (!read_arch(gguf, shard.architecture)) {
+            fail(error, "missing general.architecture in GGUF");
+            return false;
+        }
+        if (!read_u32(gguf, "qwen4exp.block_count", shard.n_layer) ||
+            !read_u32(gguf, "qwen4exp.expert_count", shard.n_expert) ||
+            !read_u32(gguf, "qwen4exp.expert_used_count", shard.n_expert_used)) {
+            fail(error, "missing Qwen4Exp expert metadata in GGUF");
+            return false;
+        }
+        if (!initialized) {
+            out.architecture = shard.architecture;
+            out.n_layer = shard.n_layer;
+            out.n_expert = shard.n_expert;
+            out.n_expert_used = shard.n_expert_used;
+            out.layers.resize(static_cast<size_t>(out.n_layer));
+            initialized = true;
+        } else if (out.architecture != shard.architecture || out.n_layer != shard.n_layer ||
+                   out.n_expert != shard.n_expert || out.n_expert_used != shard.n_expert_used) {
+            fail(error, "inconsistent Qwen4Exp metadata across GGUF shards");
+            return false;
+        }
 
-        const auto identity = identify_qwen4exp_tensor(name);
-        int layer = -1;
-        if (!parse_layer(identity, layer) ||
-            identity.role != Qwen4ExpTensorRole::RoutedExpert) continue;
-        if (layer >= out.n_layer) {
-            fail(error, "Qwen4Exp tensor layer exceeds block count: " + name);
-            return false;
+        const int64_t tensor_count = gguf_get_n_tensors(gguf);
+        for (int64_t tid = 0; tid < tensor_count; ++tid) {
+            const char * raw_name = gguf_get_tensor_name(gguf, tid);
+            if (!raw_name) {
+                fail(error, "GGUF tensor has no name");
+                return false;
+            }
+            const std::string name(raw_name);
+            if (!out.tensor_roles.observe(name, error)) return false;
+
+            const auto identity = identify_qwen4exp_tensor(name);
+            int layer = -1;
+            if (!parse_layer(identity, layer) ||
+                identity.role != Qwen4ExpTensorRole::RoutedExpert) continue;
+            if (layer >= out.n_layer) {
+                fail(error, "Qwen4Exp tensor layer exceeds block count: " + name);
+                return false;
+            }
+            auto & inventory = out.layers[static_cast<size_t>(layer)];
+            const uint64_t bytes = static_cast<uint64_t>(gguf_get_tensor_size(gguf, tid));
+            if (bytes == 0) {
+                fail(error, "zero-sized routed expert tensor: " + name);
+                return false;
+            }
+            ++inventory.expert_tensor_count;
+            inventory.total_bytes += bytes;
+            if (name.find("ffn_gate_exps") != std::string::npos) inventory.gate_bytes += bytes;
+            else if (name.find("ffn_up_exps") != std::string::npos) inventory.up_bytes += bytes;
+            else if (name.find("ffn_down_exps") != std::string::npos) inventory.down_bytes += bytes;
+            else {
+                fail(error, "unknown routed expert tensor family: " + name);
+                return false;
+            }
+            if (out.first_routed_layer < 0) out.first_routed_layer = layer;
+            else out.first_routed_layer = std::min(out.first_routed_layer, layer);
         }
-        auto & inventory = out.layers[static_cast<size_t>(layer)];
-        const uint64_t bytes = static_cast<uint64_t>(gguf_get_tensor_size(gguf, tid));
-        if (bytes == 0) {
-            fail(error, "zero-sized routed expert tensor: " + name);
-            return false;
-        }
-        ++inventory.expert_tensor_count;
-        inventory.total_bytes += bytes;
-        if (name.find("ffn_gate_exps") != std::string::npos) inventory.gate_bytes += bytes;
-        else if (name.find("ffn_up_exps") != std::string::npos) inventory.up_bytes += bytes;
-        else if (name.find("ffn_down_exps") != std::string::npos) inventory.down_bytes += bytes;
-        else {
-            fail(error, "unknown routed expert tensor family: " + name);
-            return false;
-        }
-        if (out.first_routed_layer < 0) out.first_routed_layer = layer;
-        else out.first_routed_layer = std::min(out.first_routed_layer, layer);
     }
     if (!out.valid(error)) return false;
     return out.tensor_roles.validate(out.n_layer, out.first_routed_layer, error);

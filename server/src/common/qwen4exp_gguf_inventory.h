@@ -44,4 +44,11 @@ bool scan_qwen4exp_gguf_inventory(const gguf_context * gguf,
                                   Qwen4ExpGgufInventory & out,
                                   std::string * error = nullptr);
 
+// Merge metadata from all GGUF split shards. Split files repeat model
+// metadata but partition tensor records; validation is performed only after
+// every shard has contributed its routed expert tensors.
+bool scan_qwen4exp_gguf_shards(const std::vector<const gguf_context *> & shards,
+                               Qwen4ExpGgufInventory & out,
+                               std::string * error = nullptr);
+
 } // namespace dflash::common
