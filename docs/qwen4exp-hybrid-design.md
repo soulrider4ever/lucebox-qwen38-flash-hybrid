@@ -61,3 +61,17 @@ Before attempting the R9700 path, the 8060S-only ROCm control is useful:
 with stable output hashes and roughly 7.1 GB GPU allocation. That result is
 an n-gram/canreuse control, not evidence that Qwen4Exp hybrid offload is
 complete; it gives the placement work a concrete performance target.
+
+## Split-shard expert data boundary
+
+`qwen4exp_expert_shards.*` is the loader boundary for the next runtime stage.
+It opens every GGUF shard with `no_alloc`, merges the model metadata, and
+records the absolute file offset and byte size of each layer's routed gate,
+up, and down tensor. `Qwen4ExpExpertRegion::slice()` then derives a checked
+contiguous range for one expert. The map is backend-neutral: a future R9700
+materializer can mmap each shard and upload only selected slices, while the
+Qwen4Exp graph keeps its recurrent state, sparse index cache, PLE history,
+router, and shared expert on the primary owner.
+
+This is intentionally not a runtime claim. Until the Qwen4Exp graph is wired
+into Lucebox, the map and planner are validated preparation code only.
