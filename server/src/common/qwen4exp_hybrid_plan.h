@@ -95,4 +95,19 @@ bool build_qwen4exp_hybrid_plan(
     Qwen4ExpHybridPlan & out,
     std::string * error = nullptr);
 
+// Loader integration point: consume byte-accurate expert inventory produced
+// by the split-GGUF scanner and derive the planner's per-layer budget. The
+// caller supplies routing observations and fixed primary-owner bytes (HC,
+// recurrent, indexer, PLE, and shared-expert state); those fixed bytes are
+// never included in the movable expert budget.
+struct Qwen4ExpGgufInventory;
+bool build_qwen4exp_hybrid_plan_from_inventory(
+    const Qwen4ExpGgufInventory & inventory,
+    const MoeHybridRoutingStats & routing,
+    const std::vector<uint64_t> & layer_primary_fixed_bytes,
+    uint64_t primary_expert_budget_bytes,
+    double primary_to_peer_rate,
+    Qwen4ExpHybridPlan & out,
+    std::string * error = nullptr);
+
 } // namespace dflash::common

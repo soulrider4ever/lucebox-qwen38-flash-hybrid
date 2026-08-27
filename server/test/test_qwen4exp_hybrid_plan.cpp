@@ -1,4 +1,5 @@
 #include "qwen4exp_hybrid_plan.h"
+#include "qwen4exp_gguf_inventory.h"
 
 #include <cassert>
 #include <string>
@@ -6,6 +7,7 @@
 using namespace dflash::common;
 
 int main() {
+    std::string error;
     assert(classify_qwen4exp_tensor("blk.0.hc_attn_down.weight") == Qwen4ExpTensorRole::HyperConnection);
     assert(classify_qwen4exp_tensor("blk.0.ssm_beta.weight") == Qwen4ExpTensorRole::RecurrentMixer);
     assert(classify_qwen4exp_tensor("blk.0.indexer_q_proj.weight") == Qwen4ExpTensorRole::SparseIndexer);
@@ -55,10 +57,32 @@ int main() {
     plan.experts.n_expert_used = 2;
     plan.experts.hot_counts = {1, 1};
     plan.experts.hot_expert_ids = {{0}, {1}};
-    std::string error;
     assert(plan.valid(&error));
     plan.recurrent_state_owner = 1;
     assert(!plan.valid(&error));
     assert(error.find("non-routed") != std::string::npos);
+
+    Qwen4ExpGgufInventory gguf;
+    gguf.architecture = "qwen4exp";
+    gguf.n_layer = 2;
+    gguf.n_expert = 4;
+    gguf.n_expert_used = 2;
+    gguf.first_routed_layer = 0;
+    gguf.layers.resize(2);
+    for (auto & layer : gguf.layers) {
+        layer.total_bytes = 100;
+        layer.gate_bytes = 30;
+        layer.up_bytes = 30;
+        layer.down_bytes = 40;
+        layer.expert_tensor_count = 3;
+    }
+    MoeHybridRoutingStats routing;
+    assert(routing.init(2, 4, 2));
+    Qwen4ExpHybridPlan from_inventory;
+    assert(build_qwen4exp_hybrid_plan_from_inventory(
+        gguf, routing, {0, 0}, 150, 1.0, from_inventory, &error));
+    assert(from_inventory.valid(&error));
+    assert(from_inventory.experts.n_layer == 2);
+    assert(from_inventory.experts.n_expert == 4);
     return 0;
 }

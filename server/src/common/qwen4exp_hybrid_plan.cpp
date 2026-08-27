@@ -1,4 +1,5 @@
 #include "qwen4exp_hybrid_plan.h"
+#include "qwen4exp_gguf_inventory.h"
 
 #include "moe_hybrid_routing_stats.h"
 
@@ -168,6 +169,38 @@ bool build_qwen4exp_hybrid_plan(
     if (!plan.valid(error)) return false;
     out = std::move(plan);
     return true;
+}
+
+bool build_qwen4exp_hybrid_plan_from_inventory(
+    const Qwen4ExpGgufInventory & inventory,
+    const MoeHybridRoutingStats & routing,
+    const std::vector<uint64_t> & layer_primary_fixed_bytes,
+    uint64_t primary_expert_budget_bytes,
+    double primary_to_peer_rate,
+    Qwen4ExpHybridPlan & out,
+    std::string * error) {
+    if (!inventory.valid(error)) return false;
+    if (!routing.matches(inventory.n_layer, inventory.n_expert,
+                         inventory.n_expert_used)) {
+        if (error) *error = "routing stats do not match Qwen4Exp GGUF inventory";
+        return false;
+    }
+    if (static_cast<int>(layer_primary_fixed_bytes.size()) != inventory.n_layer) {
+        if (error) *error = "fixed-byte vector does not cover Qwen4Exp layers";
+        return false;
+    }
+    std::vector<uint64_t> layer_expert_bytes;
+    layer_expert_bytes.reserve(inventory.layers.size());
+    for (const auto & layer : inventory.layers) {
+        layer_expert_bytes.push_back(layer.total_bytes);
+    }
+    Qwen4ExpHybridConfig config;
+    config.n_layer = inventory.n_layer;
+    config.n_expert = inventory.n_expert;
+    config.n_expert_used = inventory.n_expert_used;
+    return build_qwen4exp_hybrid_plan(
+        config, routing, layer_expert_bytes, layer_primary_fixed_bytes,
+        primary_expert_budget_bytes, primary_to_peer_rate, out, error);
 }
 
 } // namespace dflash::common
