@@ -93,14 +93,15 @@ bool scan_qwen4exp_gguf_shards(const std::vector<const gguf_context *> & shards,
         // Read the repeated model metadata from each shard, but scan tensor
         // records into a partial inventory because split files partition the
         // expert tensors.
-        if (!read_arch(gguf, shard.architecture)) {
-            fail(error, "missing general.architecture in GGUF");
-            return false;
-        }
-        if (!read_u32(gguf, "qwen4exp.block_count", shard.n_layer) ||
-            !read_u32(gguf, "qwen4exp.expert_count", shard.n_expert) ||
-            !read_u32(gguf, "qwen4exp.expert_used_count", shard.n_expert_used)) {
-            fail(error, "missing Qwen4Exp expert metadata in GGUF");
+        const bool has_arch = read_arch(gguf, shard.architecture);
+        const bool has_dimensions =
+            read_u32(gguf, "qwen4exp.block_count", shard.n_layer) &&
+            read_u32(gguf, "qwen4exp.expert_count", shard.n_expert) &&
+            read_u32(gguf, "qwen4exp.expert_used_count", shard.n_expert_used);
+        // GGUF split format stores the full model metadata only in shard 0;
+        // later shards may contain tensor records and split bookkeeping only.
+        if (!initialized && (!has_arch || !has_dimensions)) {
+            fail(error, "first GGUF shard lacks Qwen4Exp model metadata");
             return false;
         }
         if (!initialized) {
@@ -110,8 +111,9 @@ bool scan_qwen4exp_gguf_shards(const std::vector<const gguf_context *> & shards,
             out.n_expert_used = shard.n_expert_used;
             out.layers.resize(static_cast<size_t>(out.n_layer));
             initialized = true;
-        } else if (out.architecture != shard.architecture || out.n_layer != shard.n_layer ||
-                   out.n_expert != shard.n_expert || out.n_expert_used != shard.n_expert_used) {
+        } else if (has_arch && has_dimensions &&
+                   (out.architecture != shard.architecture || out.n_layer != shard.n_layer ||
+                   out.n_expert != shard.n_expert || out.n_expert_used != shard.n_expert_used)) {
             fail(error, "inconsistent Qwen4Exp metadata across GGUF shards");
             return false;
         }

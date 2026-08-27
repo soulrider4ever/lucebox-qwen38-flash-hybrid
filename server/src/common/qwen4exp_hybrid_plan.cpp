@@ -15,8 +15,8 @@ Qwen4ExpTensorRole classify_qwen4exp_tensor(const std::string & name) {
     if (has("token_embd") || has("tok_embd")) return Qwen4ExpTensorRole::TokenEmbedding;
     if (has("output") || has("hc_head_")) return Qwen4ExpTensorRole::Output;
     if (has("hc_")) return Qwen4ExpTensorRole::HyperConnection;
-    if (has("indexer_") || has("index_q_") || has("index_k_")) return Qwen4ExpTensorRole::SparseIndexer;
-    if (has("ple_") || has("per_layer_token_embd")) return Qwen4ExpTensorRole::PleHistory;
+    if (has("indexer_") || has("indexer.") || has("index_q_") || has("index_k_")) return Qwen4ExpTensorRole::SparseIndexer;
+    if (has("ple_") || has("ple.") || has("per_layer_token_embd")) return Qwen4ExpTensorRole::PleHistory;
     if (has("wqkv") || has("ssm_") || has("attn_gate")) return Qwen4ExpTensorRole::RecurrentMixer;
     if (has("attn_q") || has("attn_k") || has("attn_v") || has("attn_out")) return Qwen4ExpTensorRole::FullAttention;
     if (has("ffn_gate_inp_shexp") || has("ffn_gate_shexp") || has("ffn_up_shexp") || has("ffn_down_shexp")) return Qwen4ExpTensorRole::SharedExpert;
@@ -79,11 +79,14 @@ bool qwen4exp_tensor_may_move_to_peer(const Qwen4ExpTensorIdentity & identity) {
 
 bool Qwen4ExpTensorInventory::observe(const std::string & name, std::string * error) {
     const auto identity = identify_qwen4exp_tensor(name);
-    if (name.compare(0, 4, "blk.") == 0 && !identity.valid()) {
+    // A syntactically valid but newly introduced block tensor is protected by
+    // default. Only malformed block syntax is an inventory error; rejecting
+    // every unknown leaf would make the adapter brittle across GGUF revisions.
+    if (name.compare(0, 4, "blk.") == 0 && identity.layer < 0) {
         if (error) *error = "malformed or unknown Qwen4Exp block tensor: " + name;
         return false;
     }
-    if (!identity.valid() || identity.layer < 0) return true;
+    if (identity.layer < 0) return true;
 
     const size_t index = static_cast<size_t>(identity.layer);
     if (index >= routed_layer.size()) routed_layer.resize(index + 1, 0);
