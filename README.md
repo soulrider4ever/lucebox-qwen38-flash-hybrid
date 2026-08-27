@@ -24,6 +24,19 @@
 
 ---
 
+## Qwen3.8 Flash-Next Lucebox experiment
+
+This fork contains an experimental Qwen4Exp placement seam and the validated
+Lucebox runbook for Qwen3.8-Flash-Next. The fastest tested profile uses ROCm,
+`--n-cpu-moe 64`, and `ngram-mod` on the Strix Halo 8060S; it is documented in
+[`docs/qwen38-flash-next-lucebox.md`](docs/qwen38-flash-next-lucebox.md).
+
+The fork does **not** yet claim true R9700 expert offload. The documentation
+separates measured results from planned heterogeneous execution and explains
+the Qwen4Exp state/cache invariants that must be preserved.
+
+---
+
 ## Inference Engine Optimizations
 
 | Optimization | Measured setup | Result |
