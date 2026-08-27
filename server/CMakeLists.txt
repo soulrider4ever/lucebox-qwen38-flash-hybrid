@@ -490,6 +490,7 @@ add_library(dflash_common STATIC
     src/common/qwen4exp_gguf_inventory.cpp
     src/common/qwen4exp_hybrid_loader.cpp
     src/common/qwen4exp_expert_shards.cpp
+    src/common/qwen4exp_expert_materializer.cpp
     src/qwen35/layer_split_forward.cpp
     src/qwen35/qwen35_target_shard_ipc.cpp
     src/qwen35/qwen35_target_shard_ipc_daemon.cpp
@@ -870,6 +871,14 @@ if(DFLASH27B_TESTS)
         ${CMAKE_CURRENT_SOURCE_DIR}/src)
     target_link_libraries(test_qwen4exp_expert_shards PRIVATE dflash_common)
     list(APPEND _raw_unit_test_targets test_qwen4exp_expert_shards)
+
+    add_executable(test_qwen4exp_expert_materializer
+        test/test_qwen4exp_expert_materializer.cpp)
+    target_include_directories(test_qwen4exp_expert_materializer PRIVATE
+        ${DFLASH27B_SRC_INCLUDE_DIRS})
+    target_link_libraries(test_qwen4exp_expert_materializer PRIVATE
+        dflash_common ggml ${DFLASH27B_GGML_BACKEND_TARGET} ggml-base)
+    list(APPEND _raw_unit_test_targets test_qwen4exp_expert_materializer)
 
     # Header-only platform shims must remain independently buildable and
     # runnable on hosted Windows workers without a GPU.
