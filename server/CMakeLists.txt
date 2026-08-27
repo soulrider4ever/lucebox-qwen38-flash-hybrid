@@ -486,6 +486,7 @@ add_library(dflash_common STATIC
     src/common/moe_expert_compute_ipc.cpp
     src/common/moe_hybrid_swap_manager.cpp
     src/common/moe_routing_collector.cpp
+    src/common/qwen4exp_hybrid_plan.cpp
     src/qwen35/layer_split_forward.cpp
     src/qwen35/qwen35_target_shard_ipc.cpp
     src/qwen35/qwen35_target_shard_ipc_daemon.cpp
@@ -848,6 +849,12 @@ option(DFLASH27B_SERVER "Build dflash_server + backend_ipc_daemon" ON)
 if(DFLASH27B_TESTS)
     set(_raw_unit_test_targets)
     enable_testing()
+
+    add_executable(test_qwen4exp_hybrid_plan test/test_qwen4exp_hybrid_plan.cpp)
+    target_include_directories(test_qwen4exp_hybrid_plan PRIVATE
+        ${DFLASH27B_SRC_INCLUDE_DIRS})
+    target_link_libraries(test_qwen4exp_hybrid_plan PRIVATE dflash_common)
+    list(APPEND _raw_unit_test_targets test_qwen4exp_hybrid_plan)
 
     # Header-only platform shims must remain independently buildable and
     # runnable on hosted Windows workers without a GPU.
