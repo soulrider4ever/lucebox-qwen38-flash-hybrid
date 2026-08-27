@@ -2,6 +2,9 @@
 
 #include "moe_hybrid_routing_stats.h"
 
+#include <cctype>
+#include <limits>
+
 namespace dflash::common {
 
 Qwen4ExpTensorRole classify_qwen4exp_tensor(const std::string & name) {
@@ -19,6 +22,54 @@ Qwen4ExpTensorRole classify_qwen4exp_tensor(const std::string & name) {
     if (has("ffn_gate_inp")) return Qwen4ExpTensorRole::ExpertRouter;
     if (has("ffn_gate_exps") || has("ffn_up_exps") || has("ffn_down_exps") || has("ffn_gate_up_exps")) return Qwen4ExpTensorRole::RoutedExpert;
     return Qwen4ExpTensorRole::Unknown;
+}
+
+namespace {
+
+bool is_digits(const std::string & value) {
+    if (value.empty()) return false;
+    for (unsigned char c : value) if (!std::isdigit(c)) return false;
+    return true;
+}
+
+bool split_block_name(const std::string & name, int & layer, std::string & leaf) {
+    constexpr const char * prefix = "blk.";
+    if (name.compare(0, 4, prefix) != 0) return false;
+    const size_t dot = name.find('.', 4);
+    if (dot == std::string::npos || !is_digits(name.substr(4, dot - 4))) return false;
+    const long long parsed = std::stoll(name.substr(4, dot - 4));
+    if (parsed > std::numeric_limits<int>::max()) return false;
+    leaf = name.substr(dot + 1);
+    if (leaf.size() > 6 && leaf.compare(leaf.size() - 6, 6, ".weight") == 0) {
+        leaf.resize(leaf.size() - 6);
+    }
+    layer = static_cast<int>(parsed);
+    return !leaf.empty();
+}
+
+} // namespace
+
+Qwen4ExpTensorIdentity identify_qwen4exp_tensor(const std::string & name) {
+    Qwen4ExpTensorIdentity result;
+    int layer = -1;
+    std::string leaf;
+    if (!split_block_name(name, layer, leaf)) {
+        result.role = classify_qwen4exp_tensor(name);
+        return result;
+    }
+
+    result.layer = layer;
+    result.role = classify_qwen4exp_tensor(leaf);
+    result.expert_stacked = result.role == Qwen4ExpTensorRole::RoutedExpert;
+    return result;
+}
+
+bool qwen4exp_tensor_may_move_to_peer(const Qwen4ExpTensorIdentity & identity) {
+    // Only routed expert stacks are safe to execute out of the primary graph.
+    // In particular, SharedExpert is intentionally excluded even though it is
+    // an FFN tensor: it participates in every token's residual path.
+    return identity.valid() && identity.expert_stacked &&
+           identity.role == Qwen4ExpTensorRole::RoutedExpert;
 }
 
 bool Qwen4ExpHybridPlan::valid(std::string * error) const {

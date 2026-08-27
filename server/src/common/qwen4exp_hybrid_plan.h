@@ -21,9 +21,27 @@ enum class Qwen4ExpTensorRole {
     SharedExpert,
 };
 
+// Parsed identity for a model tensor.  Qwen4Exp names are deliberately
+// parsed instead of matched with a broad substring: a misplaced router or
+// recurrent-state tensor would produce valid-looking output for a while and
+// then corrupt the stateful decode path.
+struct Qwen4ExpTensorIdentity {
+    Qwen4ExpTensorRole role = Qwen4ExpTensorRole::Unknown;
+    int layer = -1;
+    bool expert_stacked = false;
+    bool valid() const { return role != Qwen4ExpTensorRole::Unknown; }
+};
+
 // Classify canonical llama.cpp Qwen4Exp tensor names. Unknown tensors stay on
 // the target owner when a future loader consumes this boundary.
 Qwen4ExpTensorRole classify_qwen4exp_tensor(const std::string & name);
+
+// Parse canonical `blk.<layer>.<tensor>[.weight]` names.  Non-block tensors
+// are returned with layer=-1; malformed block names are rejected by returning
+// Unknown rather than being silently assigned to a placement tier.
+Qwen4ExpTensorIdentity identify_qwen4exp_tensor(const std::string & name);
+
+bool qwen4exp_tensor_may_move_to_peer(const Qwen4ExpTensorIdentity & identity);
 
 struct Qwen4ExpHybridConfig {
     int n_layer = 0;

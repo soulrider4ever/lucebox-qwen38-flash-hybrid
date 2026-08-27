@@ -13,6 +13,26 @@ int main() {
     assert(classify_qwen4exp_tensor("blk.0.ffn_down_exps.weight") == Qwen4ExpTensorRole::RoutedExpert);
     assert(classify_qwen4exp_tensor("blk.0.ffn_down_shexp.weight") == Qwen4ExpTensorRole::SharedExpert);
 
+    const auto routed = identify_qwen4exp_tensor("blk.17.ffn_down_exps.weight");
+    assert(routed.valid());
+    assert(routed.layer == 17);
+    assert(routed.expert_stacked);
+    assert(qwen4exp_tensor_may_move_to_peer(routed));
+
+    const auto shared = identify_qwen4exp_tensor("blk.17.ffn_down_shexp.weight");
+    assert(shared.valid());
+    assert(shared.layer == 17);
+    assert(!shared.expert_stacked);
+    assert(!qwen4exp_tensor_may_move_to_peer(shared));
+
+    const auto state = identify_qwen4exp_tensor("blk.17.ssm_beta.weight");
+    assert(state.valid());
+    assert(state.layer == 17);
+    assert(!qwen4exp_tensor_may_move_to_peer(state));
+
+    assert(!identify_qwen4exp_tensor("blk.bad.ffn_down_exps.weight").valid());
+    assert(!identify_qwen4exp_tensor("blk.17").valid());
+
     Qwen4ExpHybridPlan plan;
     plan.config.n_layer = 2;
     plan.config.n_expert = 4;

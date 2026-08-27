@@ -21,6 +21,20 @@ This is deliberately a planning seam, not a fake Qwen4Exp backend. The full
 Qwen4Exp loader/graph/cache implementation from llama.cpp still needs to be
 ported before this plan can drive inference.
 
+## Adapter boundary (current implementation)
+
+`server/src/common/qwen4exp_hybrid_plan.*` now provides a strict tensor
+identity parser for canonical `blk.<layer>.<tensor>[.weight]` names. It marks
+only `ffn_*_exps` routed stacks as peer-movable. Shared experts, routers,
+hyper-connections, recurrent/GDN tensors, sparse indexer tensors, and PLE
+history are explicitly non-movable. Malformed block names are rejected rather
+than silently assigned to a placement tier.
+
+This is the first executable adapter boundary. It is intentionally not wired
+into the inference graph yet: the Qwen4Exp graph must first expose its routed
+expert tensors and state ownership through a model-specific loader. The unit
+test covers routed-vs-shared/state classification and malformed names.
+
 ## Intended Lucebox route
 
 For the R9700 + Strix Halo system, the eventual plan is:
