@@ -18,9 +18,13 @@ namespace dflash::common {
 
 struct Qwen4ExpLayerExpertInventory {
     uint64_t total_bytes = 0;
+    uint64_t per_expert_bytes = 0;
     uint64_t gate_bytes = 0;
     uint64_t up_bytes = 0;
     uint64_t down_bytes = 0;
+    uint64_t gate_per_expert_bytes = 0;
+    uint64_t up_per_expert_bytes = 0;
+    uint64_t down_per_expert_bytes = 0;
     uint32_t tensor_count = 0;
     uint32_t expert_tensor_count = 0;
 };

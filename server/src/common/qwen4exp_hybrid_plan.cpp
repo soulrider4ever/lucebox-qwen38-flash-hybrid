@@ -192,7 +192,10 @@ bool build_qwen4exp_hybrid_plan_from_inventory(
     std::vector<uint64_t> layer_expert_bytes;
     layer_expert_bytes.reserve(inventory.layers.size());
     for (const auto & layer : inventory.layers) {
-        layer_expert_bytes.push_back(layer.total_bytes);
+        // Placement counts individual resident experts, not the stacked
+        // tensor. Using total_bytes here would overcharge every candidate by
+        // n_expert and prevent selective peer residency.
+        layer_expert_bytes.push_back(layer.per_expert_bytes);
     }
     Qwen4ExpHybridConfig config;
     config.n_layer = inventory.n_layer;

@@ -72,9 +72,13 @@ int main() {
     gguf.layers.resize(2);
     for (auto & layer : gguf.layers) {
         layer.total_bytes = 100;
-        layer.gate_bytes = 30;
-        layer.up_bytes = 30;
-        layer.down_bytes = 40;
+        layer.per_expert_bytes = 25;
+        layer.gate_bytes = 32;
+        layer.up_bytes = 32;
+        layer.down_bytes = 36;
+        layer.gate_per_expert_bytes = 8;
+        layer.up_per_expert_bytes = 8;
+        layer.down_per_expert_bytes = 9;
         layer.expert_tensor_count = 3;
     }
     MoeHybridRoutingStats routing;

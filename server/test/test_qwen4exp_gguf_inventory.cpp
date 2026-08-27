@@ -35,9 +35,10 @@ int main(int argc, char ** argv) {
                     static_cast<long long>(shards.size()));
         for (int layer = inventory.first_routed_layer; layer < inventory.n_layer; ++layer) {
             const auto & row = inventory.layers[static_cast<size_t>(layer)];
-            std::printf("layer=%d expert_bytes=%llu gate=%llu up=%llu down=%llu tensors=%u\n",
+            std::printf("layer=%d expert_bytes=%llu per_expert=%llu gate=%llu up=%llu down=%llu tensors=%u\n",
                         layer,
                         static_cast<unsigned long long>(row.total_bytes),
+                        static_cast<unsigned long long>(row.per_expert_bytes),
                         static_cast<unsigned long long>(row.gate_bytes),
                         static_cast<unsigned long long>(row.up_bytes),
                         static_cast<unsigned long long>(row.down_bytes),

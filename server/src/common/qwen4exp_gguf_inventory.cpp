@@ -60,6 +60,27 @@ bool Qwen4ExpGgufInventory::valid(std::string * error) const {
                  std::to_string(layer));
             return false;
         }
+        if (expert.per_expert_bytes == 0 || expert.gate_per_expert_bytes == 0 ||
+            expert.up_per_expert_bytes == 0 || expert.down_per_expert_bytes == 0) {
+            fail(error, "routed expert bytes are not divisible into complete experts at Qwen4Exp layer " +
+                 std::to_string(layer));
+            return false;
+        }
+        const uint64_t experts = static_cast<uint64_t>(n_expert);
+        if (expert.gate_per_expert_bytes > std::numeric_limits<uint64_t>::max() / experts ||
+            expert.up_per_expert_bytes > std::numeric_limits<uint64_t>::max() / experts ||
+            expert.down_per_expert_bytes > std::numeric_limits<uint64_t>::max() / experts ||
+            expert.per_expert_bytes > std::numeric_limits<uint64_t>::max() / experts ||
+            expert.gate_per_expert_bytes * experts != expert.gate_bytes ||
+            expert.up_per_expert_bytes * experts != expert.up_bytes ||
+            expert.down_per_expert_bytes * experts != expert.down_bytes ||
+            expert.per_expert_bytes * experts != expert.total_bytes ||
+            expert.per_expert_bytes != expert.gate_per_expert_bytes +
+                expert.up_per_expert_bytes + expert.down_per_expert_bytes) {
+            fail(error, "inconsistent per-expert routed byte accounting at Qwen4Exp layer " +
+                 std::to_string(layer));
+            return false;
+        }
     }
     return true;
 }
@@ -151,6 +172,15 @@ bool scan_qwen4exp_gguf_shards(const std::vector<const gguf_context *> & shards,
                 fail(error, "unknown routed expert tensor family: " + name);
                 return false;
             }
+            if (bytes % static_cast<uint64_t>(out.n_expert) != 0) {
+                fail(error, "routed expert tensor is not divisible by expert count: " + name);
+                return false;
+            }
+            const uint64_t per_expert = bytes / static_cast<uint64_t>(out.n_expert);
+            inventory.per_expert_bytes += per_expert;
+            if (name.find("ffn_gate_exps") != std::string::npos) inventory.gate_per_expert_bytes += per_expert;
+            else if (name.find("ffn_up_exps") != std::string::npos) inventory.up_per_expert_bytes += per_expert;
+            else inventory.down_per_expert_bytes += per_expert;
             if (out.first_routed_layer < 0) out.first_routed_layer = layer;
             else out.first_routed_layer = std::min(out.first_routed_layer, layer);
         }
