@@ -2,9 +2,10 @@
 set -euo pipefail
 
 # Experimental benchmark-only profile. Do not expose this through OpenWebUI:
-# semantic canaries on 2026-08-27 found that the ROCm execution path emits an
-# endless stream of '/' tokens even with speculation and graph reuse disabled.
-# Use run-qwen4exp-openwebui-safe.sh for chat.
+# semantic canaries on 2026-08-27 found that this CPU-MoE-backed route emits
+# an endless stream of '/' tokens even with speculation and graph reuse
+# disabled. Use run-qwen4exp-dual-rocm-safe.sh for split chat, or
+# run-qwen4exp-openwebui-safe.sh for the single-8060S Vulkan fallback.
 #
 # Run Qwen3.8 Flash-Next with the protected Qwen4Exp graph on the 8060S,
 # selected complete routed-expert layer stacks on the R9700, and all remaining
