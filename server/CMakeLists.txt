@@ -857,6 +857,12 @@ if(DFLASH27B_TESTS)
     target_link_libraries(test_qwen4exp_hybrid_plan PRIVATE dflash_common)
     list(APPEND _raw_unit_test_targets test_qwen4exp_hybrid_plan)
 
+    add_executable(test_qwen4exp_gguf_inventory test/test_qwen4exp_gguf_inventory.cpp)
+    target_include_directories(test_qwen4exp_gguf_inventory PRIVATE
+        ${DFLASH27B_SRC_INCLUDE_DIRS})
+    target_link_libraries(test_qwen4exp_gguf_inventory PRIVATE dflash_common)
+    list(APPEND _raw_unit_test_targets test_qwen4exp_gguf_inventory)
+
     # Header-only platform shims must remain independently buildable and
     # runnable on hosted Windows workers without a GPU.
     if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/test/test_platform_compat.cpp")
