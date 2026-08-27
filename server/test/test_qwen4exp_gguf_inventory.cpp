@@ -4,6 +4,7 @@
 
 #include "gguf.h"
 
+#include <cassert>
 #include <cstdio>
 #include <string>
 #include <vector>
@@ -45,8 +46,8 @@ int main(int argc, char ** argv) {
                         static_cast<unsigned long long>(row.up_bytes),
                         static_cast<unsigned long long>(row.down_bytes),
                         row.expert_tensor_count);
+            assert(row.per_expert_bytes > 0);
         }
-        assert(row.per_expert_bytes > 0);
     } else {
         std::fprintf(stderr, "inventory rejected: %s\n", error.c_str());
     }
