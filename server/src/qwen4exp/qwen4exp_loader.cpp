@@ -53,8 +53,8 @@ bool is_ple_gather_table(const std::string & name) {
 bool required_core_surface(const Qwen4ExpCoreWeights & weights,
                            std::string * error) {
     const char * global[] = {
-        "token_embd.weight", "hc_head_norm.weight",
-        "hc_head_down.weight", "hc_head_up.weight",
+        "token_embd.weight", "output_hc_norm.weight",
+        "output_hc_down.weight", "output_hc_up.weight",
     };
     for (const char * name : global) {
         if (!weights.find(name)) {
