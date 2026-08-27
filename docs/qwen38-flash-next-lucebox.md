@@ -4,10 +4,11 @@ This document describes the experimental Qwen3.8-Flash-Next work in this
 repository and the fastest validated Lucebox profile.
 
 > **Status:** the loader, ownership boundary, and selective R9700 execution
-> path are correctness-checked on Lucebox. The current performance winner is
-> still ROCm on the Strix Halo 8060S with CPU-resident routed MoE layers.
-> Selective R9700 expert-stack execution works and is numerically identical,
-> but loses to CPU MoE because coarse ggml scheduler transfers dominate.
+> path are byte- and placement-checked on Lucebox. The ROCm CPU-MoE and
+> selective-R9700 profiles are benchmark-only: semantic canaries found that
+> both can emit an endless stream of `/` tokens. The production-safe OpenWebUI
+> profile is Vulkan on the 8060S with graph reuse, speculative decoding, and
+> default reasoning disabled.
 
 ## What this fork adds
 
@@ -104,9 +105,32 @@ huggingface-cli download \
 The server accepts the first shard as the model path and discovers the
 remaining shards in the same directory.
 
-## Fastest validated profile
+## OpenWebUI-safe profile
 
-On the reference Lucebox, the working command was:
+Use [`scripts/run-qwen4exp-openwebui-safe.sh`](../scripts/run-qwen4exp-openwebui-safe.sh).
+On the reference host:
+
+```bash
+LLAMA_SERVER=/path/to/build-vulkan/bin/llama-server \
+MODEL=/models/qwen38-flash-next/UD-IQ4_XS/Qwen3.8-Flash-Next-UD-IQ4_XS-00001-of-00003.gguf \
+scripts/run-qwen4exp-openwebui-safe.sh
+```
+
+The launcher validates that `Vulkan1` is the Radeon 8060S and then uses:
+
+- all model layers on `Vulkan1`;
+- `LLAMA_GRAPH_REUSE_DISABLE=1`;
+- `--spec-type none`;
+- `--reasoning off`.
+
+Semantic acceptance on 2026-08-27 included a normal greeting for `hi`, an
+exact factual response, multi-turn recall, OpenAI-compatible streaming with a
+terminal `[DONE]`, and compatibility with requests that still sent the older
+ROCm alias. Port 8088 remains unauthenticated and must stay LAN-only.
+
+## Fastest benchmark-only profile
+
+On the reference Lucebox, the fastest measured command was:
 
 ```bash
 HIP_VISIBLE_DEVICES=1 \
@@ -129,6 +153,12 @@ HIP_VISIBLE_DEVICES=1 \
   --alias Qwen3.8-Flash-Next-IQ4_XS-ROCm-CPU-MoE64
 ```
 
+This profile is **not suitable for chat or correctness evaluation**. Direct
+OpenAI-compatible semantic probes returned only `/` tokens with both default
+thinking and thinking disabled. The failure persisted after disabling
+`ngram-mod` and after setting `LLAMA_GRAPH_REUSE_DISABLE=1`, so neither
+speculation nor the local graph-reuse patch is the root cause.
+
 The exact `--device` value is intentionally paired with
 `HIP_VISIBLE_DEVICES=1`; without that mask, Lucebox's ROCm device numbering
 puts the R9700 first. Keep port 8088 LAN-only unless access control is added.
@@ -146,7 +176,7 @@ amdgpu-client `vram + gtt` allocation sampled during the measured requests.
 On unified memory this is **workload allocation**, not installed RAM or a
 fixed GPU aperture.
 
-Latest validated LocalMaxxing run:
+Historical LocalMaxxing run (throughput only; semantically invalid):
 
 | Metric | Result |
 |---|---:|
@@ -158,7 +188,9 @@ Latest validated LocalMaxxing run:
 
 The representative workload was 2,549 prompt tokens and 128 output tokens.
 All measured outputs had the same hash and the n-gram draft accepted 125/125
-tokens. The public LocalMaxxing record is
+tokens, but later semantic testing showed that hash equality was a false
+correctness oracle: the accelerated profiles reproduced the same degenerate
+output. The public LocalMaxxing record is
 `cmtbd3r5g0026qq012qf9p1xp`.
 
 ## What did not win
@@ -194,7 +226,8 @@ The tested 20-layer profile placed layers 0 through 19 on the R9700:
 
 The benchmark used the same 2,549-token prompt, 128 generated tokens,
 temperature zero, one warmup, and three measured runs. All three profiles
-produced the exact same SHA-256 output hash. The R9700 values above are that
+produced the exact same SHA-256 output hash, but this is not semantic
+correctness evidence because the ROCm control itself is degenerate. The R9700 values above are that
 device's unique amdgpu client allocation, not combined system/GPU capacity.
 
 The result closes the coarse scheduler experiment: moving fewer complete
@@ -204,7 +237,7 @@ or incorrect Qwen4Exp state ownership.
 
 ## Engineering conclusion
 
-The validated ownership split is:
+The validated byte-placement split is:
 
 - 8060S: HC/GDN/QSA graph, recurrent and index caches, shared experts, and
   protected core tensors;
@@ -212,7 +245,8 @@ The validated ownership split is:
   R9700;
 - R9700: only explicitly selected routed `ffn_*_exps` tensor stacks.
 
-The native upstream Qwen4Exp graph is the numerical source of truth; copying
+The native upstream Qwen4Exp graph remains the implementation source, but the
+current ROCm execution path is not a valid numerical oracle. Copying
 it into a second Lucebox backend would duplicate model and cache semantics
 without changing the measured transfer boundary. A future attempt should
 therefore start below ggml's whole-tensor scheduler: batch only active expert

@@ -1,6 +1,11 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
+# Experimental benchmark-only profile. Do not expose this through OpenWebUI:
+# semantic canaries on 2026-08-27 found that the ROCm execution path emits an
+# endless stream of '/' tokens even with speculation and graph reuse disabled.
+# Use run-qwen4exp-openwebui-safe.sh for chat.
+#
 # Run Qwen3.8 Flash-Next with the protected Qwen4Exp graph on the 8060S,
 # selected complete routed-expert layer stacks on the R9700, and all remaining
 # routed stacks on CPU.
@@ -53,4 +58,23 @@ grep -q 'ROCm1: AMD Radeon 8060S' <<<"$devices" || {
 layers=$(seq -s '|' 0 "$((R9700_LAYERS - 1))")
 override="blk\\.(${layers})\\.ffn_(gate|up|down)_exps\\.weight=ROCm0"
 
-exec "$LLAMA_SERVER" +    -m "$MODEL" +    --device ROCm1,ROCm0 +    --tensor-split 1,0 +    --split-mode layer +    --override-tensor "$override" +    --n-cpu-moe 64 +    --n-gpu-layers 99 +    --ctx-size "$CTX_SIZE" +    --threads 32 +    --threads-batch 32 +    --ubatch-size 1024 +    --host "$HOST" +    --port "$PORT" +    --jinja +    --flash-attn on +    --no-ui +    --load-mode none +    --spec-type ngram-mod +    --alias "Qwen3.8-Flash-Next-IQ4_XS-Hybrid-R9700-L0-$((R9700_LAYERS - 1))"
+exec "$LLAMA_SERVER" \
+    -m "$MODEL" \
+    --device ROCm1,ROCm0 \
+    --tensor-split 1,0 \
+    --split-mode layer \
+    --override-tensor "$override" \
+    --n-cpu-moe 64 \
+    --n-gpu-layers 99 \
+    --ctx-size "$CTX_SIZE" \
+    --threads 32 \
+    --threads-batch 32 \
+    --ubatch-size 1024 \
+    --host "$HOST" \
+    --port "$PORT" \
+    --jinja \
+    --flash-attn on \
+    --no-ui \
+    --load-mode none \
+    --spec-type ngram-mod \
+    --alias "Qwen3.8-Flash-Next-IQ4_XS-Hybrid-R9700-L0-$((R9700_LAYERS - 1))"
