@@ -117,17 +117,26 @@ scripts/run-qwen4exp-dual-rocm-safe.sh
 ```
 
 The launcher validates unmasked ROCm ordering (`ROCm0=R9700`,
-`ROCm1=8060S`) and uses a layer split of `0.33,0.67`, with the 8060S as the
-main GPU. Every model layer is GPU-owned; there is deliberately no
-`--n-cpu-moe`. Qwen4Exp graph reuse remains enabled, while speculative
-decoding and default reasoning are disabled.
+`ROCm1=8060S`) and uses the tuned layer split `0.45,0.55`, one server slot,
+and the 8060S as the main GPU. Every model layer is GPU-owned; there is
+deliberately no `--n-cpu-moe`. Qwen4Exp graph reuse remains enabled, while
+speculative decoding and default reasoning are disabled.
 
-Semantic acceptance on 2026-08-27 included a normal greeting, an exact
-factual response, multi-turn recall, a coherent 235+ token explanation, and
-OpenAI-compatible streaming. The 33/67 profile measured approximately
-23.66 tok/s sustained decode and 92.64 tok/s prefill on that practical prompt.
-Observed workload residency was about 22.9 GiB VRAM plus 0.6 GiB GTT on the
-R9700, and 40.4 GiB GTT on the 8060S.
+The Qwen4Exp runtime must include
+[`patches/qwen4exp-qsa-min-kv.patch`](../patches/qwen4exp-qsa-min-kv.patch).
+The launcher defaults `LLAMA_QWEN4EXP_QSA_MIN_KV=32768`, using dense
+attention below 32K cached tokens and retaining the model's sparse QSA path
+above that threshold. Set `QSA_MIN_KV=0` to restore QSA at all non-empty
+cache lengths, or omit the patch and environment variable to preserve the
+upstream behavior.
+
+Semantic acceptance on 2026-08-27 included a normal greeting, exact factual
+record retrieval at 5K and 15K prompt lengths, multi-turn recall, sustained
+generation, and OpenAI-compatible streaming. On the 2,549-token benchmark,
+the final warmup-plus-three-run median was **25.639 tok/s decode**,
+**537.394 tok/s prefill**, **323.811 tok/s total**, and **4.747 s TTFT**.
+Its measured R9700 workload allocation was 32.907 GB
+(decimal), leaving a small but tested execution margin on the 32 GiB card.
 
 ## Single-8060S rollback
 
@@ -202,6 +211,23 @@ amdgpu-client `vram + gtt` allocation sampled during the measured requests.
 On unified memory this is **workload allocation**, not installed RAM or a
 fixed GPU aperture.
 
+Final semantically validated dual-GPU profile:
+
+| Metric | Result |
+|---|---:|
+| Decode | **25.639 tok/s** |
+| Prefill | **537.394 tok/s** |
+| Total | **323.811 tok/s** |
+| TTFT | **4,747.227 ms** |
+| Peak R9700 workload allocation | **32.907 GB** |
+
+The representative request contained 2,549 prompt tokens and generated 87
+tokens before the model's stop condition. One warmup and all three measured
+runs produced the same output hash. The same deployed process passed greeting,
+multi-turn recall, exact streaming content, and terminal `[DONE]` canaries.
+Compared with the previously uploaded semantically valid 6.143 tok/s split
+row, this is 4.17x faster in decode and 28.5% faster in prefill.
+
 Historical LocalMaxxing run (throughput only; semantically invalid):
 
 | Metric | Result |
@@ -228,7 +254,21 @@ output. The public LocalMaxxing record is
 - Vulkan row splitting fails on the relevant backend with
   `device Vulkan0 does not support split buffers`.
 - The current Flash-Next GGUF does not expose a usable MTP head; `ngram-mod`
-  is the supported speculative path.
+  is the supported speculative path, but it did not improve this workload.
+- ROCm row splitting is unavailable for this runtime (`ROCm0` reports that it
+  does not support split buffers).
+- QSA indexer top-k overrides of 1024 and 512 changed output without improving
+  sustained decode. The original top-k 2048 is retained above 32K.
+
+### Why dense attention wins below 32K
+
+The model's sparse QSA indexer evaluates 2,048 cached positions in 12 full
+attention layers. On this host its graph/index overhead dominates the dense
+attention saved at tested lengths through 30,106 prompt tokens. The same
+15,505-token factual workload measured 7.05 tok/s with QSA and 24.25 tok/s
+with dense attention. At 30,106 tokens dense attention still measured
+23.30 tok/s. The 32K threshold is therefore a measured deployment policy,
+not a claim that sparse attention is universally slower at longer context.
 
 ### Selective R9700 expert execution
 
@@ -246,7 +286,7 @@ The tested 20-layer profile placed layers 0 through 19 on the R9700:
 
 | Profile | Long decode | Long prefill | R9700 allocation | Output hash |
 |---|---:|---:|---:|---|
-| CPU MoE 64 (winner) | **179.134 tok/s** | **501.079 tok/s** | 0 GB | `a85b737…` |
+| CPU MoE 64 (invalid throughput-only control) | **179.134 tok/s** | **501.079 tok/s** | 0 GB | `a85b737…` |
 | R9700 layers 0-19 | 153.529 tok/s | 421.716 tok/s | 30.385 GB | `a85b737…` |
 | R9700 layers 0-3 | 149.762 tok/s | 397.611 tok/s | 10.950 GB | `a85b737…` |
 
@@ -260,6 +300,33 @@ The result closes the coarse scheduler experiment: moving fewer complete
 expert stacks does not recover the CPU-MoE baseline. The bottleneck is the
 per-layer cross-device scheduler boundary, not insufficient R9700 capacity
 or incorrect Qwen4Exp state ownership.
+
+### Frequency-ranked expert placement
+
+The corrected route collector reads the strided `ffn_moe_topk` tensor
+row-by-row. On a 2,486-token natural-text corpus, the global hot set covered:
+
+| Hot experts | Route coverage |
+|---:|---:|
+| 10 | 25.253% |
+| 30 | 46.887% |
+| 60 | 63.886% |
+| 128 | 82.933% |
+| 203 | 92.561% |
+| 259 | 96.400% |
+
+The materializer's coverage policy filled a 28 GiB R9700 budget with 12,456
+layer/expert entries and covered 96.819% of the observed routes. A real
+dual-owner expert microbenchmark then executed mixed hot/cold batches (9/1
+and 5/5 splits) with finite output, exact GGUF upload verification, and about
+0.325 ms median per expert layer.
+
+This proves the proposed hot cache at the storage and expert-execution seam,
+but it is not yet a full-model server mode. The Qwen4Exp GGUF stores each
+layer's 512 experts in one stacked tensor, and this llama.cpp ROCm backend
+cannot row-split that tensor. End-to-end integration therefore needs compact
+per-owner expert tensors plus a one-activation join in the native graph; a
+launcher-only override cannot implement it safely.
 
 ## Engineering conclusion
 

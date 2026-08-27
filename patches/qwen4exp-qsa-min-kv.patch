@@ -1,0 +1,31 @@
+diff --git a/src/models/qwen4exp.cpp b/src/models/qwen4exp.cpp
+--- a/src/models/qwen4exp.cpp
++++ b/src/models/qwen4exp.cpp
+@@ -1,5 +1,7 @@
+ #include "models.h"
+ #include "llama-memory-hybrid-idx.h"
+ #include "llama-memory-recurrent.h"
+ 
++#include <cstdlib>
++
+ void llama_model_qwen4exp::load_arch_hparams(llama_model_loader & ml) {
+@@ -609,7 +611,18 @@
+     const int64_t n_embd_head = hparams.n_embd_head_v();
+     GGML_ASSERT(n_embd_head == hparams.n_embd_head_k());
+ 
+     // indexer reads the same block input as q/k/v; no cache or no ratio means dense
+-    const bool qsa = mctx_hyb->get_idx() != nullptr && hparams.dsv4_compress_ratios[il] > 0;
++    static const int64_t qsa_min_kv = [] {
++        const char * value = std::getenv("LLAMA_QWEN4EXP_QSA_MIN_KV");
++        if (value == nullptr || value[0] == '\0') {
++            return int64_t{-1};
++        }
++        char * end = nullptr;
++        const long long parsed = std::strtoll(value, &end, 10);
++        return end != value && *end == '\0' && parsed >= 0 ? (int64_t) parsed : int64_t{-1};
++    }();
++    const bool qsa = mctx_hyb->get_idx() != nullptr &&
++                     hparams.dsv4_compress_ratios[il] > 0 &&
++                     (qsa_min_kv < 0 || mctx_hyb->get_idx()->get_n_kv() > qsa_min_kv);
+ 
+     ggml_tensor * top_k = qsa ? build_qsa_top_k(mctx_hyb, cur, inp_pos, sections, il) : nullptr;
